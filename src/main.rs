@@ -4,45 +4,85 @@ use async_std::{
     task,
 };
 
-fn read_byte(buf: &mut Vec<u8>) -> u8 {
-    assert!(buf.len() > 0);
-    buf.remove(0)
+struct Buffer {
+    data: Vec<u8>,
 }
 
-fn read_var_int(buf: &mut Vec<u8>) -> i32 {
-    let mut value: i32 = 0;
-    let mut position = 0;
-    let mut current_byte;
+impl Buffer {
+    pub fn new() -> Buffer {
+        Buffer { data: vec![] }
+    }
 
-    loop {
-        current_byte = read_byte(buf);
-        // TODO: see if this works with signed/unsigned numbers properly
-        value |= ((current_byte & 0b01111111) as i32) << position; // last 7 bits
-        if (current_byte & 0b10000000) == 0 {
-            // first bit (stop bit)
-            break;
+    pub fn from_vec(v: Vec<u8>) -> Buffer {
+        Buffer { data: v }
+    }
+
+    pub fn remaining(&self) -> usize {
+        self.data.len()
+    }
+
+    // pub fn push_byte(&mut self, byte: u8) -> &mut Self {
+    //     self.data.push(byte);
+    //     self
+    // }
+
+    pub fn push_slice(&mut self, slice: &[u8]) -> &mut Self {
+        self.data.extend_from_slice(slice);
+        self
+    }
+
+    pub fn read_u8(&mut self) -> u8 {
+        assert!(self.remaining() > 0);
+        self.data.remove(0)
+    }
+
+    pub fn read_var_int(&mut self) -> i32 {
+        let mut value: i32 = 0;
+        let mut position = 0;
+        let mut current_byte;
+
+        loop {
+            current_byte = self.read_u8();
+            // TODO: see if this works with signed/unsigned numbers properly
+            value |= ((current_byte & 0b01111111) as i32) << position; // last 7 bits
+            if (current_byte & 0b10000000) == 0 {
+                // first bit (stop bit)
+                break;
+            }
+            position += 7;
+            assert!(position < 32);
         }
-        position += 7;
-        assert!(position < 32);
+
+        value
     }
 
-    value
-}
-
-fn read_string(buf: &mut Vec<u8>) -> String {
-    let length = read_var_int(buf);
-    let mut bytes = vec![0; length as usize];
-    for i in 0..length {
-        bytes[i as usize] = read_byte(buf);
+    pub fn read_bytes(&mut self, into: &mut [u8]) {
+        let len = into.len();
+        assert!(self.remaining() >= len);
+        for i in 0..len {
+            into[i] = self.read_u8();
+        }
     }
-    String::from_utf8(bytes).unwrap()
-}
 
-fn read_ushort(buf: &mut Vec<u8>) -> u16 {
-    let mut bytes = [0; 2];
-    bytes[0] = read_byte(buf);
-    bytes[1] = read_byte(buf);
-    u16::from_be_bytes(bytes)
+    pub fn read_buffer(&mut self, length: usize) -> Buffer {
+        let mut bytes = vec![0; length];
+        self.read_bytes(&mut bytes);
+        Buffer::from_vec(bytes)
+    }
+
+    pub fn read_string(&mut self) -> String {
+        let length = self.read_var_int();
+        assert!(length >= 0);
+        let mut bytes = vec![0; length as usize];
+        self.read_bytes(&mut bytes);
+        String::from_utf8(bytes).unwrap()
+    }
+
+    pub fn read_ushort(&mut self) -> u16 {
+        let mut bytes = [0; 2];
+        self.read_bytes(&mut bytes);
+        u16::from_be_bytes(bytes)
+    }
 }
 
 #[derive(Debug)]
@@ -54,7 +94,7 @@ enum ClientState {
 }
 
 struct Client {
-    buf: Vec<u8>,
+    buf: Buffer,
     stream: TcpStream,
     state: ClientState,
 }
@@ -62,7 +102,7 @@ struct Client {
 impl Client {
     pub fn new(stream: TcpStream) -> Client {
         Client {
-            buf: vec![],
+            buf: Buffer::new(),
             stream,
             state: ClientState::Handshaking,
         }
@@ -85,11 +125,11 @@ impl Client {
                 }
             };
             // append frame bytes into self.buf:
-            self.buf.extend_from_slice(&frame[..bytes_read]);
+            self.buf.push_slice(&frame[..bytes_read]);
             println!(
-                "\tRead {} bytes into vec, buf.len() = {}",
+                "\tRead {} bytes into buf, buf.remaining() = {}",
                 bytes_read,
-                self.buf.len()
+                self.buf.remaining()
             );
 
             // handle the packets
@@ -106,26 +146,22 @@ impl Client {
         //      Length      VarInt
         //      PacketID    VarInt
         //      Data        Bytes...
-        let length = read_var_int(&mut self.buf);
 
+        let length = self.buf.read_var_int();
         assert!(length >= 0);
-        dbg!(&self.buf);
 
-        let remaining = self.buf.split_off(length as usize);
-        let mut payload = self.buf.clone();
-        self.buf = remaining;
+        let mut payload = self.buf.read_buffer(length as usize);
 
-        dbg!(length, &payload);
+        let packet_id = payload.read_var_int();
 
-        let packet_id = read_var_int(&mut payload);
-        dbg!(packet_id, &payload);
+        dbg!(packet_id);
 
         match (&self.state, packet_id) {
             (ClientState::Handshaking, 0x00) => {
-                let protocol_version = read_var_int(&mut payload);
-                let server_address = read_string(&mut payload);
-                let server_port = read_ushort(&mut payload);
-                let next_state = read_var_int(&mut payload);
+                let protocol_version = payload.read_var_int();
+                let server_address = payload.read_string();
+                let server_port = payload.read_ushort();
+                let next_state = payload.read_var_int();
                 dbg!(protocol_version, server_address, server_port, next_state);
                 match next_state {
                     1 => self.state = ClientState::Status,
