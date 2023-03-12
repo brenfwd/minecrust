@@ -9,6 +9,42 @@ use thiserror::Error;
 
 use buffer::{Buffer, BufferError};
 
+trait FromBuffer {
+    fn from_buffer(buf: &mut Buffer) -> Result<Self, BufferError>
+    where
+        Self: Sized;
+}
+
+#[derive(Debug)]
+#[allow(dead_code)]
+struct C2SHandshakePacket {
+    protocol_version: i32,
+    server_address: String,
+    server_port: u16,
+    next_state: i32,
+}
+
+impl FromBuffer for C2SHandshakePacket {
+    fn from_buffer(buf: &mut Buffer) -> Result<Self, BufferError> {
+        let protocol_version = buf.read_var_int()?;
+        let server_address = buf.read_string()?;
+        let server_port = buf.read_ushort()?;
+        let next_state = buf.read_var_int()?;
+        Ok(C2SHandshakePacket {
+            protocol_version,
+            server_address,
+            server_port,
+            next_state,
+        })
+    }
+}
+
+// trait ToBuffer {
+//     fn to_buffer(&self, buf: &mut Buffer);
+// }
+
+// region: client
+
 #[derive(Debug, Error)]
 enum ClientError {
     #[error("packet decode error: {0:?}")]
@@ -87,18 +123,15 @@ impl Client {
 
         match (&self.state, packet_id) {
             (ClientState::Handshaking, 0x00) => {
-                let protocol_version = payload.read_var_int()?;
-                let server_address = payload.read_string()?;
-                let server_port = payload.read_ushort()?;
-                let next_state = payload.read_var_int()?;
-                dbg!(protocol_version, server_address, server_port, next_state);
-                match next_state {
+                let packet = C2SHandshakePacket::from_buffer(&mut payload)?;
+                dbg!(&packet);
+                match packet.next_state {
                     1 => self.state = ClientState::Status,
                     2 => self.state = ClientState::Login,
                     _ => {
                         return Err(ClientError::LogicError(format!(
-                            "Invalid next_state: {next_state} (from {:?}",
-                            self.state
+                            "Invalid next_state: {} (from {:?})",
+                            packet.next_state, self.state
                         )));
                     }
                 }
@@ -111,6 +144,8 @@ impl Client {
         }
     }
 }
+
+// endregion: client
 
 async fn handle_client(stream: TcpStream) {
     let mut client = Client::new(stream);
