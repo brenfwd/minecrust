@@ -1,4 +1,5 @@
 mod buffer;
+mod packet;
 
 use async_std::{
     io::{self, ReadExt, WriteExt},
@@ -8,71 +9,6 @@ use async_std::{
 use thiserror::Error;
 
 use buffer::{Buffer, BufferError, FromBuffer, ToBuffer};
-
-// region: packets
-
-#[derive(Debug)]
-#[allow(dead_code)]
-struct C2SHandshakePacket {
-    protocol_version: i32,
-    server_address: String,
-    server_port: u16,
-    next_state: i32,
-}
-
-impl FromBuffer for C2SHandshakePacket {
-    fn from_buffer(buf: &mut Buffer) -> Result<Self, BufferError> {
-        let protocol_version = buf.read_var_int()?;
-        let server_address = buf.read_string()?;
-        let server_port = buf.read_u16()?;
-        let next_state = buf.read_var_int()?;
-        Ok(C2SHandshakePacket {
-            protocol_version,
-            server_address,
-            server_port,
-            next_state,
-        })
-    }
-}
-
-#[derive(Debug)]
-#[allow(dead_code)]
-struct S2CStatusResponsePacket {
-    json_response: String,
-}
-
-impl ToBuffer for S2CStatusResponsePacket {
-    fn to_buffer(&self, buf: &mut Buffer) {
-        buf.write_var_int(0x00).write_string(&self.json_response);
-    }
-}
-
-#[derive(Debug)]
-#[allow(dead_code)]
-struct S2CPingPacket {
-    payload: i64,
-}
-
-impl ToBuffer for S2CPingPacket {
-    fn to_buffer(&self, buf: &mut Buffer) {
-        buf.write_var_int(0x01).write_i64(self.payload);
-    }
-}
-
-#[derive(Debug)]
-#[allow(dead_code)]
-struct C2SPingPacket {
-    payload: i64,
-}
-
-impl FromBuffer for C2SPingPacket {
-    fn from_buffer(buf: &mut Buffer) -> Result<Self, BufferError> {
-        let payload = buf.read_i64()?;
-        Ok(C2SPingPacket { payload })
-    }
-}
-
-// endregion: packets
 
 // region: client
 
@@ -154,7 +90,7 @@ impl Client {
 
         match (&self.state, packet_id) {
             (ClientState::Handshaking, 0x00) => {
-                let packet = C2SHandshakePacket::from_buffer(&mut payload)?;
+                let packet = packet::C2SHandshakePacket::from_buffer(&mut payload)?;
                 dbg!(&packet);
                 match packet.next_state {
                     1 => self.state = ClientState::Status,
@@ -169,7 +105,7 @@ impl Client {
                 return Ok(());
             }
             (ClientState::Status, 0x00) => {
-                let packet = S2CStatusResponsePacket {
+                let packet = packet::S2CStatusResponsePacket {
                     json_response: r#"{"version":{"name":"1.8.9","protocol":47},"players":{"max":20,"online":0},"description":{"text":"A Minecrust Server"}}"#.to_string(),
                 };
                 let mut buf = Buffer::new();
@@ -183,9 +119,9 @@ impl Client {
                 return Ok(());
             }
             (ClientState::Status, 0x01) => {
-                let packet = C2SPingPacket::from_buffer(&mut payload)?;
+                let packet = packet::C2SPingPacket::from_buffer(&mut payload)?;
                 dbg!(&packet);
-                let packet = S2CPingPacket {
+                let packet = packet::S2CPingPacket {
                     payload: packet.payload,
                 };
                 let mut buf = Buffer::new();
