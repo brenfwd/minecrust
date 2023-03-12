@@ -1,5 +1,5 @@
 use async_std::{
-    io::{self, ReadExt, WriteExt},
+    io::{self, ReadExt},
     net::{TcpListener, TcpStream},
     task,
 };
@@ -24,6 +24,7 @@ struct Buffer {
     data: Vec<u8>,
 }
 
+#[allow(dead_code)]
 impl Buffer {
     pub fn new() -> Buffer {
         Buffer { data: vec![] }
@@ -37,10 +38,10 @@ impl Buffer {
         self.data.len()
     }
 
-    // pub fn push_byte(&mut self, byte: u8) -> &mut Self {
-    //     self.data.push(byte);
-    //     self
-    // }
+    pub fn push_byte(&mut self, byte: u8) -> &mut Self {
+        self.data.push(byte);
+        self
+    }
 
     pub fn push_slice(&mut self, slice: &[u8]) -> &mut Self {
         self.data.extend_from_slice(slice);
@@ -86,7 +87,7 @@ impl Buffer {
         Ok(value)
     }
 
-    pub fn read_bytes(&mut self, into: &mut [u8]) -> BufferResult<()> {
+    pub fn read_bytes_into(&mut self, into: &mut [u8]) -> BufferResult<()> {
         let len = into.len();
         self.check_bytes(len)?;
         for i in 0..len {
@@ -95,10 +96,15 @@ impl Buffer {
         Ok(())
     }
 
-    pub fn read_buffer(&mut self, length: usize) -> BufferResult<Buffer> {
+    pub fn read_bytes(&mut self, length: usize) -> BufferResult<Vec<u8>> {
+        self.check_bytes(length)?;
         let mut bytes = vec![0; length];
-        self.read_bytes(&mut bytes)?;
-        Ok(Buffer::from_vec(bytes))
+        self.read_bytes_into(&mut bytes)?;
+        Ok(bytes)
+    }
+
+    pub fn read_buffer(&mut self, length: usize) -> BufferResult<Buffer> {
+        Ok(Buffer::from_vec(self.read_bytes(length)?))
     }
 
     pub fn read_string(&mut self) -> BufferResult<String> {
@@ -106,17 +112,13 @@ impl Buffer {
         if length < 0 {
             return Err(BufferError::InvalidStringLength(length));
         }
-        let mut bytes = vec![0; length as usize];
-        self.read_bytes(&mut bytes)?;
-        match String::from_utf8(bytes) {
-            Ok(str) => Ok(str),
-            Err(e) => Err(BufferError::InvalidUTF8String),
-        }
+        let bytes = self.read_bytes(length as usize)?;
+        String::from_utf8(bytes).map_err(|_| BufferError::InvalidUTF8String)
     }
 
     pub fn read_ushort(&mut self) -> BufferResult<u16> {
         let mut bytes = [0; 2];
-        self.read_bytes(&mut bytes)?;
+        self.read_bytes_into(&mut bytes)?;
         Ok(u16::from_be_bytes(bytes))
     }
 }
@@ -133,6 +135,7 @@ enum ClientError {
 
 type ClientResult<T> = Result<T, ClientError>;
 
+#[allow(dead_code)]
 #[derive(Debug)]
 enum ClientState {
     Handshaking,
