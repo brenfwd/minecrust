@@ -1,7 +1,7 @@
 mod buffer;
 
 use async_std::{
-    io::{self, ReadExt},
+    io::{self, ReadExt, WriteExt},
     net::{TcpListener, TcpStream},
     task,
 };
@@ -13,6 +13,10 @@ trait FromBuffer {
     fn from_buffer(buf: &mut Buffer) -> Result<Self, BufferError>
     where
         Self: Sized;
+}
+
+trait ToBuffer {
+    fn to_buffer(&self, buf: &mut Buffer);
 }
 
 #[derive(Debug)]
@@ -28,7 +32,7 @@ impl FromBuffer for C2SHandshakePacket {
     fn from_buffer(buf: &mut Buffer) -> Result<Self, BufferError> {
         let protocol_version = buf.read_var_int()?;
         let server_address = buf.read_string()?;
-        let server_port = buf.read_ushort()?;
+        let server_port = buf.read_u16()?;
         let next_state = buf.read_var_int()?;
         Ok(C2SHandshakePacket {
             protocol_version,
@@ -36,6 +40,43 @@ impl FromBuffer for C2SHandshakePacket {
             server_port,
             next_state,
         })
+    }
+}
+
+#[derive(Debug)]
+#[allow(dead_code)]
+struct S2CStatusResponsePacket {
+    json_response: String,
+}
+
+impl ToBuffer for S2CStatusResponsePacket {
+    fn to_buffer(&self, buf: &mut Buffer) {
+        buf.write_var_int(0x00).write_string(&self.json_response);
+    }
+}
+
+#[derive(Debug)]
+#[allow(dead_code)]
+struct S2CPingPacket {
+    payload: i64,
+}
+
+impl ToBuffer for S2CPingPacket {
+    fn to_buffer(&self, buf: &mut Buffer) {
+        buf.write_var_int(0x01).write_i64(self.payload);
+    }
+}
+
+#[derive(Debug)]
+#[allow(dead_code)]
+struct C2SPingPacket {
+    payload: i64,
+}
+
+impl FromBuffer for C2SPingPacket {
+    fn from_buffer(buf: &mut Buffer) -> Result<Self, BufferError> {
+        let payload = buf.read_i64()?;
+        Ok(C2SPingPacket { payload })
     }
 }
 
@@ -94,7 +135,7 @@ impl Client {
             );
 
             // handle the packets
-            self.process_packets()?;
+            self.process_packets().await?;
         }
     }
 
@@ -102,7 +143,7 @@ impl Client {
         self.stream.peer_addr().unwrap().to_string()
     }
 
-    fn process_packets(&mut self) -> ClientResult<()> {
+    async fn process_packets(&mut self) -> ClientResult<()> {
         // Each packet:
         //      Length      VarInt
         //      PacketID    VarInt
@@ -131,6 +172,36 @@ impl Client {
                         )));
                     }
                 }
+                return Ok(());
+            }
+            (ClientState::Status, 0x00) => {
+                let packet = S2CStatusResponsePacket {
+                    json_response: r#"{"version":{"name":"1.8.9","protocol":47},"players":{"max":20,"online":0},"description":{"text":"A Minecrust Server"}}"#.to_string(),
+                };
+                let mut buf = Buffer::new();
+                packet.to_buffer(&mut buf);
+                let mut len_buf = Buffer::new();
+                len_buf.write_var_int(buf.remaining() as i32);
+                buf.prepend_buffer(&mut len_buf);
+                self.stream
+                    .write_all(&buf.read_bytes(buf.remaining())?)
+                    .await?;
+                return Ok(());
+            }
+            (ClientState::Status, 0x01) => {
+                let packet = C2SPingPacket::from_buffer(&mut payload)?;
+                dbg!(&packet);
+                let packet = S2CPingPacket {
+                    payload: packet.payload,
+                };
+                let mut buf = Buffer::new();
+                packet.to_buffer(&mut buf);
+                let mut len_buf = Buffer::new();
+                len_buf.write_var_int(buf.remaining() as i32);
+                buf.prepend_buffer(&mut len_buf);
+                self.stream
+                    .write_all(&buf.read_bytes(buf.remaining())?)
+                    .await?;
                 return Ok(());
             }
             _ => {

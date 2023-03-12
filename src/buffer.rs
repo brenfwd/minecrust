@@ -42,6 +42,17 @@ impl Buffer {
         self
     }
 
+    pub fn prepend_slice(&mut self, slice: &[u8]) -> &mut Self {
+        self.data.splice(0..0, slice.iter().copied());
+        self
+    }
+
+    pub fn prepend_buffer(&mut self, buf: &mut Buffer) -> &mut Self {
+        self.prepend_slice(&buf.data);
+        buf.data.clear();
+        self
+    }
+
     fn check_bytes(&mut self, want: usize) -> BufferResult<()> {
         let remaining = self.remaining();
         if remaining < want {
@@ -54,6 +65,11 @@ impl Buffer {
     pub fn read_u8(&mut self) -> BufferResult<u8> {
         self.check_bytes(1)?;
         Ok(self.data.remove(0))
+    }
+
+    pub fn write_u8(&mut self, value: u8) -> &mut Self {
+        self.push_byte(value);
+        self
     }
 
     pub fn read_var_int(&mut self) -> BufferResult<i32> {
@@ -79,6 +95,21 @@ impl Buffer {
         }
 
         Ok(value)
+    }
+
+    pub fn write_var_int(&mut self, mut value: i32) -> &mut Self {
+        loop {
+            let mut temp = (value & 0b01111111) as u8;
+            value >>= 7;
+            if value != 0 {
+                temp |= 0b10000000;
+            }
+            self.push_byte(temp);
+            if value == 0 {
+                break;
+            }
+        }
+        self
     }
 
     pub fn read_bytes_into(&mut self, into: &mut [u8]) -> BufferResult<()> {
@@ -110,9 +141,32 @@ impl Buffer {
         String::from_utf8(bytes).map_err(|_| BufferError::InvalidUTF8String)
     }
 
-    pub fn read_ushort(&mut self) -> BufferResult<u16> {
+    pub fn write_string(&mut self, string: &str) -> &mut Self {
+        let bytes = string.as_bytes();
+        self.write_var_int(bytes.len() as i32);
+        self.push_slice(bytes);
+        self
+    }
+
+    pub fn read_u16(&mut self) -> BufferResult<u16> {
         let mut bytes = [0; 2];
         self.read_bytes_into(&mut bytes)?;
         Ok(u16::from_be_bytes(bytes))
+    }
+
+    pub fn write_u16(&mut self, value: u16) -> &mut Self {
+        self.push_slice(&value.to_be_bytes());
+        self
+    }
+
+    pub fn read_i64(&mut self) -> BufferResult<i64> {
+        let mut bytes = [0; 8];
+        self.read_bytes_into(&mut bytes)?;
+        Ok(i64::from_be_bytes(bytes))
+    }
+
+    pub fn write_i64(&mut self, value: i64) -> &mut Self {
+        self.push_slice(&value.to_be_bytes());
+        self
     }
 }
