@@ -39,10 +39,6 @@ impl FromBuffer for C2SHandshakePacket {
     }
 }
 
-// trait ToBuffer {
-//     fn to_buffer(&self, buf: &mut Buffer);
-// }
-
 // region: client
 
 #[derive(Debug, Error)]
