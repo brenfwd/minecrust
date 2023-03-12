@@ -170,3 +170,13 @@ impl Buffer {
         self
     }
 }
+
+pub(crate) trait FromBuffer {
+    fn from_buffer(buf: &mut Buffer) -> Result<Self, BufferError>
+    where
+        Self: Sized;
+}
+
+pub(crate) trait ToBuffer {
+    fn to_buffer(&self, buf: &mut Buffer);
+}

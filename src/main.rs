@@ -7,17 +7,9 @@ use async_std::{
 };
 use thiserror::Error;
 
-use buffer::{Buffer, BufferError};
+use buffer::{Buffer, BufferError, FromBuffer, ToBuffer};
 
-trait FromBuffer {
-    fn from_buffer(buf: &mut Buffer) -> Result<Self, BufferError>
-    where
-        Self: Sized;
-}
-
-trait ToBuffer {
-    fn to_buffer(&self, buf: &mut Buffer);
-}
+// region: packets
 
 #[derive(Debug)]
 #[allow(dead_code)]
@@ -79,6 +71,8 @@ impl FromBuffer for C2SPingPacket {
         Ok(C2SPingPacket { payload })
     }
 }
+
+// endregion: packets
 
 // region: client
 
